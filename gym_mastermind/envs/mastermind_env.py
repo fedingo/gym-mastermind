@@ -1,44 +1,27 @@
-"""Mastermind"""
-from collections import Counter
-import logging
 
 import gym
 from gym.utils import seeding
 from gym import spaces
 
+import numpy as np
+from gym_mastermind.envs.mastermind_class import *
+from gym_mastermind.envs.mastermind_render import *
 
-logger = logging.getLogger(__name__)
-
+## DEFAULT VALUES
+SYMBOLS_COUNT = 8
+SIZE = 4
+MAX_GUESS = 12
 
 class MastermindEnv(gym.Env):
-    """
-    Guess a 4-digits long password where each digit is between 0 and 5.
 
-    After each step the agent is provided with a 4-digits long tuple:
-    - '2' indicates that a digit has been correclty guessed at the correct position.
-    - '1' indicates that a digit has been correclty guessed but the position is wrong.
-    - '0' otherwise.
-
-    The rewards at the end of the episode are:
-    0 if the agent's guess is incorrect
-    1 if the agent's guess is correct
-
-    The episode terminates after the agent guesses the target or
-    12 steps have been taken.
-    """
-    values = 6
-    size = 4
-    guess_max = 12
 
     def __init__(self):
-        self.target = None
-        self.guess_count = None
-        self.observation = None
+        
+        self.game = mastermind(SYMBOLS_COUNT, SIZE, MAX_GUESS)
 
-        self.observation_space = spaces.Tuple(
-            [spaces.Discrete(3) for _ in range(self.size)])
-        self.action_space = spaces.Tuple(
-            [spaces.Discrete(self.values) for _ in range(self.size)])
+        self.symbols     = SYMBOLS_COUNT
+        self.size        = SIZE
+        self.max_guesses = MAX_GUESS
 
         self.seed()
         self.reset()
@@ -47,27 +30,59 @@ class MastermindEnv(gym.Env):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
-    def get_observation(self, action):
-        match_idxs = set(idx for idx, ai in enumerate(action) if ai == self.target[idx])
-        n_correct = len(match_idxs)
-        g_counter = Counter(self.target[idx] for idx in range(self.size) if idx not in match_idxs)
-        a_counter = Counter(action[idx] for idx in range(self.size) if idx not in match_idxs)
-        n_white = sum(min(g_count, a_counter[k])for k, g_count in g_counter.items())
-        return tuple([0] * (self.size - n_correct - n_white) + [1] * n_white + [2] * n_correct)
-
     def step(self, action):
+        #Assertion to check Action is valid
         assert self.action_space.contains(action)
-        self.guess_count += 1
-        done = action == self.target or self.guess_count >= self.guess_max
-        if done and action == self.target:
+        
+        done, solved = self.game.step(action)
+        state = self.game.get_state()
+        # Reward Function that gives 1 only if we guess the combination correctly 
+        reward = 0
+        if solved:
             reward = 1
-        else:
-            reward = 0
-        return self.get_observation(action), reward, done, {}
+        # In the additional info we give the number of tries that has been done
+        add_info = {"guess_count": self.game.guess_count}
+
+        return state, reward, done, add_info 
 
     def reset(self):
-        self.target = self.action_space.sample()
-        logger.debug("target=%s", self.target)
-        self.guess_count = 0
-        self.observation = (0,) * self.size
-        return self.observation
+
+        # Used to change values if the user wants to modify the game parameters
+        self.game.symbols = self.symbols
+        self.game.size = self.size
+        self.game.max_guesses = self.max_guesses
+
+        self.game.reset()
+
+        self.obs_shape = [self.game.size*2]
+        self.action_space = spaces.MultiDiscrete([self.game.symbols]*self.game.size)
+
+        # The observation space is actually composed of a vector of twice the length of the guesses
+        # The first half contains the guess that we have just made
+        # The second half is the result of the query (containing 2,1,0) that indicates how many are correct
+        self.observation_space = spaces.Box(low=0, high=self.game.symbols, shape=self.obs_shape, dtype=np.int)
+
+    def render(self, mode='human', close=False):
+
+        render_mastermind(self.game)
+        if close:
+            pygame.quit()
+
+
+if __name__ == "__main__":
+    import time
+
+    env = MastermindEnv()
+    env.game.symbols = 2
+    _ = env.reset()
+
+    print(env.action_space)
+
+    for _ in range(0,100):
+        _, reward, done, _ = env.step(env.action_space.sample())
+        env.render()
+
+        if done:
+            env.reset()
+
+        time.sleep(0.1)
